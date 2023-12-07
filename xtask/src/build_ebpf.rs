@@ -1,25 +1,28 @@
 use std::{path::PathBuf, process::Command};
-
 use clap::Parser;
+use anyhow::Result; // Using anyhow for error handling
 
+// Enum representing different architectures
 #[derive(Debug, Copy, Clone)]
 pub enum Architecture {
     BpfEl,
     BpfEb,
 }
 
+// Implementing string parsing for the Architecture enum
 impl std::str::FromStr for Architecture {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "bpfel-unknown-none" => Architecture::BpfEl,
-            "bpfeb-unknown-none" => Architecture::BpfEb,
-            _ => return Err("invalid target".to_owned()),
-        })
+        match s {
+            "bpfel-unknown-none" => Ok(Architecture::BpfEl),
+            "bpfeb-unknown-none" => Ok(Architecture::BpfEb),
+            _ => Err("invalid target".to_owned()),
+        }
     }
 }
 
+// Display trait for Architecture enum
 impl std::fmt::Display for Architecture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -29,6 +32,7 @@ impl std::fmt::Display for Architecture {
     }
 }
 
+// Struct to parse command line options
 #[derive(Debug, Parser)]
 pub struct Options {
     /// Set the endianness of the BPF target
@@ -39,29 +43,28 @@ pub struct Options {
     pub release: bool,
 }
 
-pub fn build_ebpf(opts: Options) -> Result<(), anyhow::Error> {
+// Function to build the eBPF program
+pub fn build_ebpf(opts: Options) -> Result<()> {
     let dir = PathBuf::from("xdp-ebpf");
     let target = format!("--target={}", opts.target);
-    let mut args = vec![
-        "build",
-        target.as_str(),
-        "-Z",
-        "build-std=core",
-    ];
+    let mut args = vec!["build", &target, "-Z", "build-std=core"];
+    
     if opts.release {
-        args.push("--release")
+        args.push("--release");
     }
 
-    // Command::new creates a child process which inherits all env variables. This means env
-    // vars set by the cargo xtask command are also inherited. RUSTUP_TOOLCHAIN is removed
-    // so the rust-toolchain.toml file in the -ebpf folder is honored.
-
+    // Spawn a child process to run the build command
     let status = Command::new("cargo")
         .current_dir(&dir)
-        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTUP_TOOLCHAIN") // Remove env var to honor rust-toolchain.toml
         .args(&args)
         .status()
-        .expect("failed to build bpf program");
-    assert!(status.success());
+        .context("failed to build bpf program")?; // Improved error handling
+
+    if !status.success() {
+        anyhow::bail!("Command exited with non-zero status"); // Handle non-zero exit status
+    }
+
     Ok(())
 }
+
