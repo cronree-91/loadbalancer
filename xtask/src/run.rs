@@ -1,10 +1,11 @@
 use std::process::Command;
 
-use anyhow::Context as _;
+use anyhow::{Context, Result};
 use clap::Parser;
 
 use crate::build_ebpf::{build_ebpf, Architecture, Options as BuildOptions};
 
+// Struct for command line options
 #[derive(Debug, Parser)]
 pub struct Options {
     /// Set the endianness of the BPF target
@@ -22,50 +23,54 @@ pub struct Options {
 }
 
 /// Build the project
-fn build(opts: &Options) -> Result<(), anyhow::Error> {
+fn build(opts: &Options) -> Result<()> {
     let mut args = vec!["build"];
     if opts.release {
-        args.push("--release")
+        args.push("--release");
     }
+
+    // Handle command execution errors more gracefully
     let status = Command::new("cargo")
         .args(&args)
         .status()
-        .expect("failed to build userspace");
-    assert!(status.success());
+        .context("Failed to build userspace")?;
+
+    if !status.success() {
+        anyhow::bail!("Build command exited with non-zero status");
+    }
     Ok(())
 }
 
 /// Build and run the project
-pub fn run(opts: Options) -> Result<(), anyhow::Error> {
-    // build our ebpf program followed by our application
+pub fn run(opts: Options) -> Result<()> {
+    // Build eBPF program and userspace application
     build_ebpf(BuildOptions {
         target: opts.bpf_target,
         release: opts.release,
     })
     .context("Error while building eBPF program")?;
+
     build(&opts).context("Error while building userspace application")?;
 
-    // profile we are building (release or debug)
+    // Determine the build profile (release or debug)
     let profile = if opts.release { "release" } else { "debug" };
     let bin_path = format!("target/{profile}/xdp-hello");
 
-    // arguments to pass to the application
-    let mut run_args: Vec<_> =
-        opts.run_args.iter().map(String::as_str).collect();
-
-    // configure args
+    // Prepare arguments for the application
+    let mut run_args: Vec<_> = opts.run_args.iter().map(String::as_str).collect();
     let mut args: Vec<_> = opts.runner.trim().split_terminator(' ').collect();
-    args.push(bin_path.as_str());
+    args.push(&bin_path);
     args.append(&mut run_args);
 
-    // run the command
-    let status = Command::new(args.first().expect("No first argument"))
+    // Run the command with enhanced error handling
+    let status = Command::new(args.first().ok_or_else(|| anyhow::Error::msg("Runner command not specified"))?)
         .args(args.iter().skip(1))
         .status()
-        .expect("failed to run the command");
+        .context("Failed to run the command")?;
 
     if !status.success() {
         anyhow::bail!("Failed to run `{}`", args.join(" "));
     }
     Ok(())
 }
+
